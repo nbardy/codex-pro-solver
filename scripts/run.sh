@@ -13,10 +13,11 @@ Usage:
 
 Environment overrides:
   PRO_SOLVER_MODEL     Optional model passed to `codex exec -m`
-  PRO_SOLVER_WIDTH     Attempts per round in strict round mode
-  PRO_SOLVER_ROUNDS    Number of rounds in strict round mode
-  PRO_SOLVER_ATTEMPTS  Number of isolated attempts to generate (default: 3)
-  PRO_SOLVER_MAX_PARALLEL  Max concurrent attempt runs (default: PRO_SOLVER_ATTEMPTS)
+  PRO_SOLVER_PARALLEL  Attempts per round in default round mode (default: 3)
+  PRO_SOLVER_ROUNDS    Number of rounds in default round mode (default: 3)
+  PRO_SOLVER_WIDTH     Legacy alias for PRO_SOLVER_PARALLEL
+  PRO_SOLVER_ATTEMPTS  Legacy flat-mode total attempts
+  PRO_SOLVER_MAX_PARALLEL  Legacy flat-mode concurrency cap
   PRO_SOLVER_CURRENT   Set to 1 to add explicit current-info/source-verification instructions
   PRO_SOLVER_TOPIC     Optional explicit topic slug; otherwise derived from the task
   PRO_SOLVER_TIMEOUT   Per-stage timeout in seconds (default: 1200)
@@ -113,11 +114,11 @@ ROOT="$PIPELINE_ROOT/$TOPIC_SLUG"
 EXPLORATION_DIR="$ROOT/exploration"
 SYNTHESIS_DIR="$ROOT/synthesis"
 TIMEOUT_S="${PRO_SOLVER_TIMEOUT:-1200}"
-ROUND_WIDTH="${PRO_SOLVER_WIDTH:-}"
+ROUND_PARALLEL="${PRO_SOLVER_PARALLEL:-${PRO_SOLVER_WIDTH:-}}"
 ROUND_COUNT="${PRO_SOLVER_ROUNDS:-}"
-ATTEMPT_COUNT="${PRO_SOLVER_ATTEMPTS:-3}"
-MAX_PARALLEL="${PRO_SOLVER_MAX_PARALLEL:-$ATTEMPT_COUNT}"
-EXECUTION_MODE="attempts"
+ATTEMPT_COUNT="${PRO_SOLVER_ATTEMPTS:-}"
+MAX_PARALLEL="${PRO_SOLVER_MAX_PARALLEL:-}"
+EXECUTION_MODE="rounds"
 
 require_positive_int() {
   local value="$1"
@@ -129,17 +130,32 @@ require_positive_int() {
   fi
 }
 
-if [[ -n "$ROUND_WIDTH" || -n "$ROUND_COUNT" ]]; then
+if [[ -n "${PRO_SOLVER_PARALLEL:-}" && -n "${PRO_SOLVER_WIDTH:-}" && "${PRO_SOLVER_PARALLEL}" != "${PRO_SOLVER_WIDTH}" ]]; then
+  echo "PRO_SOLVER_PARALLEL and PRO_SOLVER_WIDTH disagree. Set only one, or set them to the same value." >&2
+  exit 1
+fi
+
+if [[ (-n "$ROUND_PARALLEL" || -n "$ROUND_COUNT") && (-n "$ATTEMPT_COUNT" || -n "$MAX_PARALLEL") ]]; then
+  echo "Round-mode vars and flat-mode vars cannot be combined. Use PRO_SOLVER_ROUNDS + PRO_SOLVER_PARALLEL, or use PRO_SOLVER_ATTEMPTS + PRO_SOLVER_MAX_PARALLEL." >&2
+  exit 1
+fi
+
+if [[ -n "$ROUND_PARALLEL" || -n "$ROUND_COUNT" || (-z "$ATTEMPT_COUNT" && -z "$MAX_PARALLEL") ]]; then
   EXECUTION_MODE="rounds"
-  ROUND_WIDTH="${ROUND_WIDTH:-1}"
-  ROUND_COUNT="${ROUND_COUNT:-1}"
-  require_positive_int "$ROUND_WIDTH" "PRO_SOLVER_WIDTH"
+  ROUND_PARALLEL="${ROUND_PARALLEL:-3}"
+  ROUND_COUNT="${ROUND_COUNT:-3}"
+  require_positive_int "$ROUND_PARALLEL" "PRO_SOLVER_PARALLEL"
   require_positive_int "$ROUND_COUNT" "PRO_SOLVER_ROUNDS"
-  ATTEMPT_COUNT="$((ROUND_WIDTH * ROUND_COUNT))"
-  MAX_PARALLEL="$ROUND_WIDTH"
+  ATTEMPT_COUNT="$((ROUND_PARALLEL * ROUND_COUNT))"
+  MAX_PARALLEL="$ROUND_PARALLEL"
 else
+  EXECUTION_MODE="attempts"
+  ATTEMPT_COUNT="${ATTEMPT_COUNT:-3}"
+  MAX_PARALLEL="${MAX_PARALLEL:-$ATTEMPT_COUNT}"
   require_positive_int "$ATTEMPT_COUNT" "PRO_SOLVER_ATTEMPTS"
   require_positive_int "$MAX_PARALLEL" "PRO_SOLVER_MAX_PARALLEL"
+  ROUND_PARALLEL="$MAX_PARALLEL"
+  ROUND_COUNT="${ROUND_COUNT:-1}"
 fi
 
 mkdir -p "$EXPLORATION_DIR" "$SYNTHESIS_DIR"
@@ -260,7 +276,7 @@ Execution mode: $EXECUTION_MODE
 Round number: $round_n
 Slot within round: $slot_n
 Total rounds: ${ROUND_COUNT:-1}
-Width: ${ROUND_WIDTH:-$MAX_PARALLEL}
+Parallel per round: ${ROUND_PARALLEL:-$MAX_PARALLEL}
 Task file: $ROOT/input.md
 Exploration folder: $EXPLORATION_DIR
 Output folder: $ROOT/attempt_$attempt_n
@@ -305,9 +321,9 @@ run_attempts_in_rounds() {
 
   for ((round_n = 1; round_n <= ROUND_COUNT; round_n++)); do
     local -a round_pids=()
-    echo "== Stage 2 round $round_n/$ROUND_COUNT =="
+    echo "== Stage 2 round $round_n/$ROUND_COUNT (${ROUND_PARALLEL} parallel) =="
 
-    for ((slot_n = 1; slot_n <= ROUND_WIDTH; slot_n++)); do
+    for ((slot_n = 1; slot_n <= ROUND_PARALLEL; slot_n++)); do
       run_attempt_stage "$attempt_n" "$round_n" "$slot_n" &
       round_pids+=("$!")
       attempt_n="$((attempt_n + 1))"

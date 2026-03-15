@@ -31,7 +31,22 @@ It is designed for tasks where one long agent session is weaker than several cle
 
 ## Install
 
-### Option 1: Clone Into Your Codex Skills Directory
+### Option 1: Keep The Repo Anywhere And Install A Thin Skill Shim
+
+This keeps the git repo in one place and makes the Codex skill path a thin set of symlinks:
+
+```bash
+git clone https://github.com/nbardy/codex-pro-solver.git ~/git/codex-pro-solver
+
+mkdir -p ~/.codex/skills/private/pro-solver
+ln -sfn ~/git/codex-pro-solver/SKILL.md ~/.codex/skills/private/pro-solver/SKILL.md
+ln -sfn ~/git/codex-pro-solver/scripts ~/.codex/skills/private/pro-solver/scripts
+ln -sfn ~/git/codex-pro-solver/prompts ~/.codex/skills/private/pro-solver/prompts
+```
+
+This is the cleanest way to keep one local source of truth while still letting Codex discover the skill.
+
+### Option 2: Clone Into Your Codex Skills Directory
 
 If you want the skill available directly to Codex by name, clone it into your local skills directory:
 
@@ -42,7 +57,7 @@ git clone https://github.com/nbardy/codex-pro-solver.git ~/.codex/skills/private
 
 After that, Codex can discover it as the `pro` skill from the `SKILL.md` metadata.
 
-### Option 2: Copy It Manually
+### Option 3: Copy It Manually
 
 Clone it anywhere, then copy the repo contents into:
 
@@ -77,8 +92,9 @@ Artifacts are written to:
 The runner supports these optional environment variables:
 
 - `PRO_SOLVER_MODEL`
-- `PRO_SOLVER_WIDTH`
+- `PRO_SOLVER_PARALLEL`
 - `PRO_SOLVER_ROUNDS`
+- `PRO_SOLVER_WIDTH`
 - `PRO_SOLVER_ATTEMPTS`
 - `PRO_SOLVER_MAX_PARALLEL`
 - `PRO_SOLVER_CURRENT`
@@ -92,16 +108,18 @@ The runner supports two execution models.
 
 ### 1. Round Mode
 
-Use this when you want strict waves of work.
+This is now the default behavior.
 
-- `PRO_SOLVER_WIDTH` = attempts per round
+- `PRO_SOLVER_PARALLEL` = attempts per round
 - `PRO_SOLVER_ROUNDS` = number of rounds
-- total attempts = `width * rounds`
+- total attempts = `parallel * rounds`
+- if you set nothing, the default is `3 rounds x 3 parallel` = `9 total attempts`
+- `PRO_SOLVER_WIDTH` remains available as a legacy alias for `PRO_SOLVER_PARALLEL`
 
 Example:
 
 ```bash
-PRO_SOLVER_WIDTH=3 \
+PRO_SOLVER_PARALLEL=3 \
 PRO_SOLVER_ROUNDS=3 \
 ~/.codex/skills/private/pro-solver/scripts/run.sh "evaluate AI coding agents"
 ```
@@ -118,7 +136,7 @@ This is the right model for a true `3 x 3` run.
 
 ### 2. Flat Attempt Mode
 
-This is the original behavior.
+This is the legacy behavior. Use it only when you want total-attempt semantics instead of rounds.
 
 - `PRO_SOLVER_ATTEMPTS` = total attempts
 - `PRO_SOLVER_MAX_PARALLEL` = concurrency cap
@@ -136,8 +154,6 @@ That gives 9 attempts total with up to 3 running at once, but not strict round b
 Example:
 
 ```bash
-PRO_SOLVER_WIDTH=3 \
-PRO_SOLVER_ROUNDS=2 \
 PRO_SOLVER_CURRENT=1 \
 ~/.codex/skills/private/pro-solver/scripts/run.sh "evaluate AI coding agents"
 ```

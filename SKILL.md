@@ -16,8 +16,9 @@ Workflow:
 The orchestration is implemented by `scripts/run.sh`. Prefer the script over manually replaying the workflow.
 
 Execution modes:
-- Round mode: `PRO_SOLVER_WIDTH=<attempts-per-round>` and `PRO_SOLVER_ROUNDS=<num-rounds>`
-- Flat mode: `PRO_SOLVER_ATTEMPTS=<total-attempts>` and `PRO_SOLVER_MAX_PARALLEL=<concurrency>`
+- Default round mode: `PRO_SOLVER_ROUNDS=<num-rounds>` and `PRO_SOLVER_PARALLEL=<attempts-per-round>`
+- `PRO_SOLVER_WIDTH` remains available as a legacy alias for `PRO_SOLVER_PARALLEL`
+- Legacy flat mode: `PRO_SOLVER_ATTEMPTS=<total-attempts>` and `PRO_SOLVER_MAX_PARALLEL=<concurrency>`
 
 ## Usage
 
@@ -57,4 +58,5 @@ Artifacts are written to:
 
 - Prompt templates live in `prompts/`.
 - The orchestrator script is `scripts/run.sh`.
-- The script supports optional environment overrides: `PRO_SOLVER_MODEL`, `PRO_SOLVER_WIDTH`, `PRO_SOLVER_ROUNDS`, `PRO_SOLVER_ATTEMPTS`, `PRO_SOLVER_MAX_PARALLEL`, `PRO_SOLVER_CURRENT`, `PRO_SOLVER_TOPIC`, `PRO_SOLVER_TIMEOUT`, and `PRO_SOLVER_ROOT`.
+- The script defaults to `3 rounds x 3 parallel` when no execution vars are set.
+- The script supports optional environment overrides: `PRO_SOLVER_MODEL`, `PRO_SOLVER_PARALLEL`, `PRO_SOLVER_ROUNDS`, `PRO_SOLVER_WIDTH`, `PRO_SOLVER_ATTEMPTS`, `PRO_SOLVER_MAX_PARALLEL`, `PRO_SOLVER_CURRENT`, `PRO_SOLVER_TOPIC`, `PRO_SOLVER_TIMEOUT`, and `PRO_SOLVER_ROOT`.
