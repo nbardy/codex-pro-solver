@@ -77,6 +77,8 @@ Artifacts are written to:
 The runner supports these optional environment variables:
 
 - `PRO_SOLVER_MODEL`
+- `PRO_SOLVER_WIDTH`
+- `PRO_SOLVER_ROUNDS`
 - `PRO_SOLVER_ATTEMPTS`
 - `PRO_SOLVER_MAX_PARALLEL`
 - `PRO_SOLVER_CURRENT`
@@ -84,10 +86,58 @@ The runner supports these optional environment variables:
 - `PRO_SOLVER_TIMEOUT`
 - `PRO_SOLVER_ROOT`
 
+## Execution Modes
+
+The runner supports two execution models.
+
+### 1. Round Mode
+
+Use this when you want strict waves of work.
+
+- `PRO_SOLVER_WIDTH` = attempts per round
+- `PRO_SOLVER_ROUNDS` = number of rounds
+- total attempts = `width * rounds`
+
 Example:
 
 ```bash
-PRO_SOLVER_ATTEMPTS=4 \
+PRO_SOLVER_WIDTH=3 \
+PRO_SOLVER_ROUNDS=3 \
+~/.codex/skills/private/pro-solver/scripts/run.sh "evaluate AI coding agents"
+```
+
+That runs:
+
+- 1 exploration pass
+- round 1: 3 attempts in parallel
+- round 2: 3 attempts in parallel after round 1 fully finishes
+- round 3: 3 attempts in parallel after round 2 fully finishes
+- 1 synthesis pass
+
+This is the right model for a true `3 x 3` run.
+
+### 2. Flat Attempt Mode
+
+This is the original behavior.
+
+- `PRO_SOLVER_ATTEMPTS` = total attempts
+- `PRO_SOLVER_MAX_PARALLEL` = concurrency cap
+
+Example:
+
+```bash
+PRO_SOLVER_ATTEMPTS=9 \
+PRO_SOLVER_MAX_PARALLEL=3 \
+~/.codex/skills/private/pro-solver/scripts/run.sh "evaluate AI coding agents"
+```
+
+That gives 9 attempts total with up to 3 running at once, but not strict round boundaries.
+
+Example:
+
+```bash
+PRO_SOLVER_WIDTH=3 \
+PRO_SOLVER_ROUNDS=2 \
 PRO_SOLVER_CURRENT=1 \
 ~/.codex/skills/private/pro-solver/scripts/run.sh "evaluate AI coding agents"
 ```
@@ -98,7 +148,7 @@ PRO_SOLVER_CURRENT=1 \
 
 - writes the task into a pipeline folder
 - runs one exploration pass
-- runs several isolated attempts in parallel
+- runs attempts either as strict rounds or as a flat parallel pool
 - runs one synthesis pass
 - stores all stage artifacts on disk for inspection
 

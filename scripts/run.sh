@@ -13,6 +13,8 @@ Usage:
 
 Environment overrides:
   PRO_SOLVER_MODEL     Optional model passed to `codex exec -m`
+  PRO_SOLVER_WIDTH     Attempts per round in strict round mode
+  PRO_SOLVER_ROUNDS    Number of rounds in strict round mode
   PRO_SOLVER_ATTEMPTS  Number of isolated attempts to generate (default: 3)
   PRO_SOLVER_MAX_PARALLEL  Max concurrent attempt runs (default: PRO_SOLVER_ATTEMPTS)
   PRO_SOLVER_CURRENT   Set to 1 to add explicit current-info/source-verification instructions
@@ -111,17 +113,33 @@ ROOT="$PIPELINE_ROOT/$TOPIC_SLUG"
 EXPLORATION_DIR="$ROOT/exploration"
 SYNTHESIS_DIR="$ROOT/synthesis"
 TIMEOUT_S="${PRO_SOLVER_TIMEOUT:-1200}"
+ROUND_WIDTH="${PRO_SOLVER_WIDTH:-}"
+ROUND_COUNT="${PRO_SOLVER_ROUNDS:-}"
 ATTEMPT_COUNT="${PRO_SOLVER_ATTEMPTS:-3}"
 MAX_PARALLEL="${PRO_SOLVER_MAX_PARALLEL:-$ATTEMPT_COUNT}"
+EXECUTION_MODE="attempts"
 
-if ! [[ "$ATTEMPT_COUNT" =~ ^[0-9]+$ ]] || [[ "$ATTEMPT_COUNT" -lt 1 ]]; then
-  echo "PRO_SOLVER_ATTEMPTS must be a positive integer." >&2
-  exit 1
-fi
+require_positive_int() {
+  local value="$1"
+  local name="$2"
 
-if ! [[ "$MAX_PARALLEL" =~ ^[0-9]+$ ]] || [[ "$MAX_PARALLEL" -lt 1 ]]; then
-  echo "PRO_SOLVER_MAX_PARALLEL must be a positive integer." >&2
-  exit 1
+  if ! [[ "$value" =~ ^[0-9]+$ ]] || [[ "$value" -lt 1 ]]; then
+    echo "$name must be a positive integer." >&2
+    exit 1
+  fi
+}
+
+if [[ -n "$ROUND_WIDTH" || -n "$ROUND_COUNT" ]]; then
+  EXECUTION_MODE="rounds"
+  ROUND_WIDTH="${ROUND_WIDTH:-1}"
+  ROUND_COUNT="${ROUND_COUNT:-1}"
+  require_positive_int "$ROUND_WIDTH" "PRO_SOLVER_WIDTH"
+  require_positive_int "$ROUND_COUNT" "PRO_SOLVER_ROUNDS"
+  ATTEMPT_COUNT="$((ROUND_WIDTH * ROUND_COUNT))"
+  MAX_PARALLEL="$ROUND_WIDTH"
+else
+  require_positive_int "$ATTEMPT_COUNT" "PRO_SOLVER_ATTEMPTS"
+  require_positive_int "$MAX_PARALLEL" "PRO_SOLVER_MAX_PARALLEL"
 fi
 
 mkdir -p "$EXPLORATION_DIR" "$SYNTHESIS_DIR"
@@ -168,8 +186,15 @@ run_stage() {
 
 attempt_strategy() {
   local attempt_n="$1"
+  local round_n="$2"
+  local slot_n="$3"
+  local strategy_key="$attempt_n"
 
-  case "$attempt_n" in
+  if [[ "$EXECUTION_MODE" == "rounds" ]]; then
+    strategy_key="$slot_n"
+  fi
+
+  case "$strategy_key" in
     1)
       cat <<'EOF'
 Attempt-specific direction:
@@ -203,11 +228,27 @@ Attempt-specific direction:
 EOF
       ;;
   esac
+
+  if [[ "$EXECUTION_MODE" == "rounds" && "$round_n" -gt 1 ]]; then
+    cat <<EOF
+Round-specific requirement:
+- This is round $round_n, slot $slot_n.
+- Stay materially different from earlier rounds, especially prior attempts in the same slot.
+- Use the slot's optimization style, but do not rephrase the same solution.
+EOF
+  fi
 }
 
 run_attempt_stage() {
   local attempt_n="$1"
+  local round_n="${2:-1}"
+  local slot_n="${3:-$attempt_n}"
+  local stage_name="Stage 2.$attempt_n: attempt $attempt_n"
   local prompt_file
+
+  if [[ "$EXECUTION_MODE" == "rounds" ]]; then
+    stage_name="Stage 2.r${round_n}.s${slot_n}: attempt $attempt_n"
+  fi
 
   prompt_file="$(mktemp)"
   cat "$PROMPTS_DIR/02_attempt.md" > "$prompt_file"
@@ -215,15 +256,20 @@ run_attempt_stage() {
 
 Topic: $TOPIC_RAW
 Attempt number: $attempt_n
+Execution mode: $EXECUTION_MODE
+Round number: $round_n
+Slot within round: $slot_n
+Total rounds: ${ROUND_COUNT:-1}
+Width: ${ROUND_WIDTH:-$MAX_PARALLEL}
 Task file: $ROOT/input.md
 Exploration folder: $EXPLORATION_DIR
 Output folder: $ROOT/attempt_$attempt_n
 Repository root: $(pwd)
 $CURRENT_INFO_BLOCK
-$(attempt_strategy "$attempt_n")
+$(attempt_strategy "$attempt_n" "$round_n" "$slot_n")
 EOF
 
-  run_stage "Stage 2.$attempt_n: attempt $attempt_n" "$ROOT/attempt_$attempt_n/_summary.txt" "$prompt_file"
+  run_stage "$stage_name" "$ROOT/attempt_$attempt_n/_summary.txt" "$prompt_file"
   rm -f "$prompt_file"
 }
 
@@ -237,6 +283,39 @@ wait_for_slot() {
       break
     fi
     sleep 1
+  done
+}
+
+run_attempts_legacy() {
+  declare -a attempt_pids=()
+
+  for ((i = 1; i <= ATTEMPT_COUNT; i++)); do
+    wait_for_slot "$MAX_PARALLEL"
+    run_attempt_stage "$i" &
+    attempt_pids+=("$!")
+  done
+
+  for pid in "${attempt_pids[@]}"; do
+    wait "$pid"
+  done
+}
+
+run_attempts_in_rounds() {
+  local attempt_n=1
+
+  for ((round_n = 1; round_n <= ROUND_COUNT; round_n++)); do
+    local -a round_pids=()
+    echo "== Stage 2 round $round_n/$ROUND_COUNT =="
+
+    for ((slot_n = 1; slot_n <= ROUND_WIDTH; slot_n++)); do
+      run_attempt_stage "$attempt_n" "$round_n" "$slot_n" &
+      round_pids+=("$!")
+      attempt_n="$((attempt_n + 1))"
+    done
+
+    for pid in "${round_pids[@]}"; do
+      wait "$pid"
+    done
   done
 }
 
@@ -256,16 +335,11 @@ EOF
 
 run_stage "Stage 1: exploration" "$EXPLORATION_DIR/_summary.txt" "$EXPLORE_PROMPT"
 
-declare -a ATTEMPT_PIDS=()
-for ((i = 1; i <= ATTEMPT_COUNT; i++)); do
-  wait_for_slot "$MAX_PARALLEL"
-  run_attempt_stage "$i" &
-  ATTEMPT_PIDS+=("$!")
-done
-
-for pid in "${ATTEMPT_PIDS[@]}"; do
-  wait "$pid"
-done
+if [[ "$EXECUTION_MODE" == "rounds" ]]; then
+  run_attempts_in_rounds
+else
+  run_attempts_legacy
+fi
 
 cat "$PROMPTS_DIR/03_synthesize.md" > "$SYNTH_PROMPT"
 cat >> "$SYNTH_PROMPT" <<EOF
